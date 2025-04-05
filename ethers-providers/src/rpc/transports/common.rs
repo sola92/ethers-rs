@@ -5,13 +5,18 @@ use ethers_core::{
     abi::AbiDecode,
     types::{Bytes, U256},
 };
+use http::{header::IntoHeaderName, HeaderName};
 use jsonwebtoken::{encode, errors::Error, get_current_timestamp, Algorithm, EncodingKey, Header};
 use serde::{
     de::{self, MapAccess, Unexpected, Visitor},
     Deserialize, Serialize,
 };
 use serde_json::{value::RawValue, Value};
-use std::fmt;
+use std::{
+    collections::HashMap,
+    fmt::{self, write},
+    str::FromStr,
+};
 use thiserror::Error;
 
 /// A JSON-RPC 2.0 error
@@ -146,19 +151,22 @@ impl<'de: 'a, 'a> Deserialize<'de> for Response<'a> {
                     match key {
                         "jsonrpc" => {
                             if jsonrpc {
-                                return Err(de::Error::duplicate_field("jsonrpc"))
+                                return Err(de::Error::duplicate_field("jsonrpc"));
                             }
 
                             let value = map.next_value()?;
                             if value != "2.0" {
-                                return Err(de::Error::invalid_value(Unexpected::Str(value), &"2.0"))
+                                return Err(de::Error::invalid_value(
+                                    Unexpected::Str(value),
+                                    &"2.0",
+                                ));
                             }
 
                             jsonrpc = true;
                         }
                         "id" => {
                             if id.is_some() {
-                                return Err(de::Error::duplicate_field("id"))
+                                return Err(de::Error::duplicate_field("id"));
                             }
 
                             let value: u64 = map.next_value()?;
@@ -166,7 +174,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for Response<'a> {
                         }
                         "result" => {
                             if result.is_some() {
-                                return Err(de::Error::duplicate_field("result"))
+                                return Err(de::Error::duplicate_field("result"));
                             }
 
                             let value: &RawValue = map.next_value()?;
@@ -174,7 +182,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for Response<'a> {
                         }
                         "error" => {
                             if error.is_some() {
-                                return Err(de::Error::duplicate_field("error"))
+                                return Err(de::Error::duplicate_field("error"));
                             }
 
                             let value: JsonRpcError = map.next_value()?;
@@ -182,7 +190,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for Response<'a> {
                         }
                         "method" => {
                             if method.is_some() {
-                                return Err(de::Error::duplicate_field("method"))
+                                return Err(de::Error::duplicate_field("method"));
                             }
 
                             let value: &str = map.next_value()?;
@@ -190,7 +198,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for Response<'a> {
                         }
                         "params" => {
                             if params.is_some() {
-                                return Err(de::Error::duplicate_field("params"))
+                                return Err(de::Error::duplicate_field("params"));
                             }
 
                             let value: Params = map.next_value()?;
@@ -207,7 +215,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for Response<'a> {
 
                 // jsonrpc version must be present in all responses
                 if !jsonrpc {
-                    return Err(de::Error::missing_field("jsonrpc"))
+                    return Err(de::Error::missing_field("jsonrpc"));
                 }
 
                 match (id, result, error, method, params) {
@@ -240,6 +248,8 @@ pub enum Authorization {
     Bearer(String),
     /// If you need to override the Authorization header value
     Raw(String),
+    /// Custom headers
+    Custom(String, String),
 }
 
 impl Authorization {
@@ -260,6 +270,24 @@ impl Authorization {
     pub fn raw(token: impl Into<String>) -> Self {
         Self::Raw(token.into())
     }
+
+    /// Override the Authorization header with your own string
+    pub fn custom(key: impl Into<String>, value: impl Into<String>) -> Self {
+        Self::Custom(key.into(), value.into())
+    }
+
+    /// Returns the header name for the authorization
+    pub fn header_name(&self) -> impl IntoHeaderName {
+        match self {
+            Self::Basic(_) => http::header::AUTHORIZATION,
+            Self::Bearer(_) => http::header::AUTHORIZATION,
+            Self::Raw(_) => http::header::AUTHORIZATION,
+            Self::Custom(key, _) => {
+                let key = key.clone();
+                HeaderName::from_str(key.as_str()).unwrap()
+            }
+        }
+    }
 }
 
 impl fmt::Display for Authorization {
@@ -268,6 +296,7 @@ impl fmt::Display for Authorization {
             Authorization::Basic(auth_secret) => write!(f, "Basic {auth_secret}"),
             Authorization::Bearer(token) => write!(f, "Bearer {token}"),
             Authorization::Raw(s) => write!(f, "{s}"),
+            Authorization::Custom(_, value) => write!(f, "{value}"),
         }
     }
 }
@@ -289,7 +318,7 @@ impl JwtKey {
                 "Invalid key length. Expected {} got {}",
                 JWT_SECRET_LENGTH,
                 key.len()
-            ))
+            ));
         }
         let mut res = [0; JWT_SECRET_LENGTH];
         res.copy_from_slice(key);
