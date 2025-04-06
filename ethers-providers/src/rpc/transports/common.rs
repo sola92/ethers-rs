@@ -284,7 +284,7 @@ impl Authorization {
             Self::Raw(_) => http::header::AUTHORIZATION,
             Self::Custom(key, _) => {
                 let key = key.clone();
-                HeaderName::from_str(key.as_str()).unwrap()
+                HeaderName::from_lowercase(key.to_lowercase().as_bytes()).unwrap()
             }
         }
     }
